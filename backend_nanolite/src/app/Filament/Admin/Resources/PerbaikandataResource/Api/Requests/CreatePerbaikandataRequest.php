@@ -28,11 +28,12 @@ class CreatePerbaikandataRequest extends FormRequest
 			'customer_categories_id' => 'required',
 			'customer_id' => 'required',
 			'pilihan_data' => 'required',
-			'data_baru' => 'required|string',
-			'address' => 'required',
+			'data_baru' => 'nullable|string',
+			'address' => 'nullable',
 			'images' => ['nullable','array'],
             'images.*' => ['file','image','max:5120'], // 5MB
 			'status_pengajuan' => ['nullable', 'string'],
+            'alasan_penolakan' => ['nullable', 'string'],
 		];
     }
 }

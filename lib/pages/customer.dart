@@ -38,7 +38,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
           '${c.alamatDisplay} '
           '${c.programName ?? ''} '
           '${c.status ?? ''} '
-          '${c.statusPengajuan ?? ''}'
+          '${c.statusPengajuan ?? ''} '
+          '${c.alasanDitolak ?? ''}' // ⬅️ ikut dicari juga
               .toLowerCase();
       return blob.contains(_q);
     }).toList();
@@ -400,6 +401,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
           DataColumn(label: Text('Reward Point')),
           DataColumn(label: Text('Gambar')),
           DataColumn(label: Text('Status Pengajuan')),
+          DataColumn(label: Text('Alasan Penolakan')), // ⬅️ kolom baru
           DataColumn(label: Text('Status')),
           DataColumn(label: Text('Tanggal Dibuat')),
           DataColumn(label: Text('Tanggal Diperbarui')),
@@ -434,8 +436,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       ),
               ),
               t(c.programName, width: 150),
-              t(c.programPoint?.toString(), width: 90),
-              t(c.rewardPoint?.toString(), width: 90),
+              t(c.programPoint.toString(), width: 90),
+              t(c.rewardPoint.toString(), width: 90),
               DataCell(
                 (c.imageUrl == null || c.imageUrl!.isEmpty)
                     ? const Text('-')
@@ -447,6 +449,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
               ),
               // Status Pengajuan -> chip gaya SalesOrder
               DataCell(_statusPengajuanChip(c.statusPengajuan)),
+              // ⬅️ isi alasan penolakan
+              t(c.alasanDitolak, width: 200),
               // Status Akun -> chip gaya SalesOrder
               DataCell(_statusAkunChip(c.status)),
               t(_fmtDate(c.createdAt), width: 140),

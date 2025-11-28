@@ -159,7 +159,6 @@ class PerbaikandataResource extends Resource
                 Textarea::make('data_baru')
                     ->label('Data Baru')
                     ->rows(3)
-                    ->required()
                     ->nullable()
                     ->maxLength(65535),
                 
@@ -260,7 +259,14 @@ class PerbaikandataResource extends Resource
                     'approved' => 'Disetujui',
                     'rejected' => 'Ditolak',
                 ])
-                ->default('pending')->visibleOn('edit')->searchable()->required(),
+                ->default('pending')->visibleOn('edit')->searchable(),
+            
+            Textarea::make('alasan_penolakan')
+                ->label('Alasan Penolakan')
+                ->rows(3)
+                ->visible(fn (callable $get) => $get('status_pengajuan') === 'rejected')
+                ->required(fn (callable $get) => $get('status_pengajuan') === 'rejected')
+                ->helperText('Wajib diisi jika status pengajuan ditolak.'),
       ]);
     }
     
@@ -321,6 +327,7 @@ class PerbaikandataResource extends Resource
                         'danger'  => 'rejected',
                     ])
                     ->sortable(),
+                TextColumn::make('alasan_penolakan')->label('Alasan Penolakan')->toggleable()->limit(50),
 
                 TextColumn::make('created_at')->label('Diajukan')->dateTime('d M Y H:i')->sortable(),
                 TextColumn::make('updated_at')->label('Diupdate')->dateTime('d M Y H:i')->sortable(),

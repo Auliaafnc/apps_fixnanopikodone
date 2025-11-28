@@ -29,9 +29,15 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
     if (_q.isEmpty) return _all;
     return _all.where((d) {
       final blob =
-          '${d.departmentName ?? ''} ${d.employeeName ?? ''} ${d.customerName ?? ''} '
-          '${d.customerCategoryName ?? ''} ${d.pilihanData ?? ''} ${d.dataBaru ?? ''} '
-          '${d.alamatDisplay}'
+          '${d.departmentName ?? ''} '
+          '${d.employeeName ?? ''} '
+          '${d.customerName ?? ''} '
+          '${d.customerCategoryName ?? ''} '
+          '${d.pilihanData ?? ''} '
+          '${d.dataBaru ?? ''} '
+          '${d.alamatDisplay} '
+          '${d.statusPengajuan ?? ''} '        // ⬅️ masuk pencarian
+          '${d.alasanPenolakan ?? ''}'         // ⬅️ masuk pencarian
               .toLowerCase();
       return blob.contains(_q);
     }).toList();
@@ -92,6 +98,39 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
     return '$y-$m-$day $hh:$mm';
   }
 
+  // ==== helper badge (mirip di Customer) ====
+  Widget _statusBadge(String label, Color bg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 12, color: Colors.white),
+      ),
+    );
+  }
+
+  // chip status pengajuan (pending/approved/rejected)
+  Widget _statusPengajuanChip(String? raw) {
+    final v = (raw ?? '').toLowerCase();
+    switch (v) {
+      case 'approved':
+      case 'disetujui':
+        return _statusBadge('Disetujui', Colors.green.withOpacity(0.18));
+      case 'rejected':
+      case 'ditolak':
+        return _statusBadge('Ditolak', Colors.red.withOpacity(0.18));
+      case 'pending':
+      case 'menunggu':
+      default:
+        return _statusBadge('Pending', Colors.amber.withOpacity(0.18));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isTablet = MediaQuery.of(context).size.width >= 600;
@@ -106,7 +145,6 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         ),
-        
       ),
       body: SafeArea(
         child: Padding(
@@ -216,7 +254,8 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
               _navItem(context, Icons.shopping_cart, 'Create Order', onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const CreateSalesOrderScreen()),
+                  MaterialPageRoute(
+                      builder: (_) => const CreateSalesOrderScreen()),
                 );
               }),
               _navItem(context, Icons.person, 'Profile', onPressed: () {
@@ -282,9 +321,25 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
   }
 
   Widget _buildTable() {
+    // bikin gaya tabel agak rapat
+    DataCell t(String? v, {double width = 180}) => DataCell(
+          SizedBox(
+            width: width,
+            child: Text(
+              (v == null || v.isEmpty || v == 'null') ? '-' : v,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        );
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
+        columnSpacing: 10,
+        horizontalMargin: 8,
+        headingRowHeight: 38,
+        dataRowHeight: 40,
         headingRowColor:
             MaterialStateProperty.all(const Color(0xFF22344C)),
         dataRowColor: MaterialStateProperty.resolveWith(
@@ -295,8 +350,9 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
         headingTextStyle: const TextStyle(
           color: Colors.white,
           fontWeight: FontWeight.w600,
+          fontSize: 13,
         ),
-        dataTextStyle: const TextStyle(color: Colors.white),
+        dataTextStyle: const TextStyle(color: Colors.white, fontSize: 13),
         columns: const [
           DataColumn(label: Text('Department')),
           DataColumn(label: Text('Karyawan')),
@@ -306,24 +362,21 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
           DataColumn(label: Text('Data Baru')),
           DataColumn(label: Text('Alamat')),
           DataColumn(label: Text('Gambar')),
+          DataColumn(label: Text('Status Pengajuan')),   // ⬅️ baru
+          DataColumn(label: Text('Alasan Penolakan')),   // ⬅️ baru
           DataColumn(label: Text('Dibuat')),
           DataColumn(label: Text('Diubah')),
         ],
         rows: _filtered.map((d) {
-          DataCell t(String? v) => DataCell(Text(
-                (v == null || v.isEmpty || v == 'null') ? '-' : v,
-                overflow: TextOverflow.ellipsis,
-              ));
-
           return DataRow(
             cells: [
-              t(d.departmentName),
-              t(d.employeeName),
-              t(d.customerName),
-              t(d.customerCategoryName),
-              t(d.pilihanData),
-              t(d.dataBaru),
-              t(d.alamatDisplay),
+              t(d.departmentName, width: 130),
+              t(d.employeeName, width: 130),
+              t(d.customerName, width: 150),
+              t(d.customerCategoryName, width: 150),
+              t(d.pilihanData, width: 150),
+              t(d.dataBaru, width: 200),
+              t(d.alamatDisplay, width: 260),
               DataCell(
                 (d.imageUrl == null || d.imageUrl!.isEmpty)
                     ? const Text('-')
@@ -333,8 +386,12 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
                         size: 40,
                       ),
               ),
-              t(_fmtDate(d.createdAt)),
-              t(_fmtDate(d.updatedAt)),
+              // chip status pengajuan
+              DataCell(_statusPengajuanChip(d.statusPengajuan)),
+              // teks alasan penolakan
+              t(d.alasanPenolakan, width: 200),
+              t(_fmtDate(d.createdAt), width: 140),
+              t(_fmtDate(d.updatedAt), width: 140),
             ],
           );
         }).toList(),
@@ -355,9 +412,13 @@ class _PerbaikanDataScreenState extends State<PerbaikanDataScreen> {
         children: [
           Icon(icon, size: iconSize, color: const Color(0xFF0A1B2D)),
           const SizedBox(height: 4),
-          Text(label,
-              style:
-                  TextStyle(color: const Color(0xFF0A1B2D), fontSize: fontSize)),
+          Text(
+            label,
+            style: TextStyle(
+              color: const Color(0xFF0A1B2D),
+              fontSize: fontSize,
+            ),
+          ),
         ],
       ),
     );

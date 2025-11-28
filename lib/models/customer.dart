@@ -17,8 +17,11 @@ class Customer {
   final String phone;
   final String? email;
 
-  final List<Map<String, dynamic>> addressDetail; // ⬅ alamat detail array
-  final String? alamat; // ⬅ full alamat dari backend
+  /// alamat detail array (misal dari alamat_detail / address)
+  final List<Map<String, dynamic>> addressDetail;
+
+  /// full alamat dari backend (alamat / full_address)
+  final String? alamat;
 
   final String? gmapsLink;
   final int programPoint;
@@ -30,7 +33,8 @@ class Customer {
   /// status pengajuan (pending/approved/rejected)
   final String? statusPengajuan;
 
- 
+  /// alasan penolakan (kalau status_pengajuan = rejected)
+  final String? alasanDitolak;
 
   final String? imageUrl;
 
@@ -58,6 +62,7 @@ class Customer {
     required this.rewardPoint,
     required this.status,
     this.statusPengajuan,
+    this.alasanDitolak,
     this.imageUrl,
     this.createdAt,
     this.updatedAt,
@@ -122,7 +127,9 @@ class Customer {
     if (v is String && v.trim().isNotEmpty) {
       try {
         final decoded = jsonDecode(v);
-        if (decoded is List) return decoded.map((e) => e.toString()).toList();
+        if (decoded is List) {
+          return decoded.map((e) => e.toString()).toList();
+        }
       } catch (_) {
         return [v];
       }
@@ -140,7 +147,8 @@ class Customer {
       companyId: _toIntOrNull(j['company_id']),
       departmentId: _toIntOrNull(j['department_id']),
       employeeId: _toIntOrNull(j['employee_id']),
-      categoryId: _toIntOrNull(j['customer_categories_id'] ?? j['category_id']),
+      categoryId:
+          _toIntOrNull(j['customer_categories_id'] ?? j['category_id']),
       programId: _toIntOrNull(j['customer_program_id'] ?? j['program_id']),
       departmentName: _optString(j['department_name'] ?? j['department']),
       employeeName: _optString(j['employee_name'] ?? j['employee']),
@@ -154,12 +162,19 @@ class Customer {
       gmapsLink: _optString(j['gmaps_link'] ?? j['maps']),
       programPoint: _toInt(j['program_point'] ?? j['jumlah_program']),
       rewardPoint: _toInt(j['reward_point']),
-      
+
       // isi status utama
       status: statusVal,
 
       // status pengajuan dari kolom status_pengajuan
       statusPengajuan: _optString(j['status_pengajuan']),
+
+      // alasan penolakan (prioritas: alasan_penolakan → rejection_comment → alasan_ditolak)
+      alasanDitolak: _optString(
+        j['alasan_penolakan'] ??
+            j['rejection_comment'] ??
+            j['alasan_ditolak'],
+      ),
 
       imageUrl: j['image']?.toString(),
       createdAt: _parseDate(j['created_at']),

@@ -28,10 +28,12 @@ class UpdatePerbaikandataRequest extends FormRequest
 			'customer_categories_id' => 'required',
 			'customer_id' => 'required',
 			'pilihan_data' => 'required',
-			'data_baru' => 'required|string',
-			'address' => 'required',
-			'image' => 'required',
-			'status_pengajuan' => 'required'
+			'data_baru' => 'nullable|string',
+			'address' => 'nullable',
+			'image' => ['nullable','array'],
+            'image.*' => ['file','image','max:5120'], // 5MB
+			'status_pengajuan' => 'nullable',
+            'alasan_penolakan' => 'nullable|string',
 		];
     }
 }

@@ -44,6 +44,9 @@ class PerbaikandataTransformer extends JsonResource
                 fn($p) => preg_match('#^https?://#i', $p) ? $p : Storage::url($p)
             )->values(),
 
+            'status_pengajuan'        => $m->status_pengajuan,
+            'alasan_penolakan'        => $m->alasan_penolakan,
+
             'created_at'              => optional($m->created_at)->toISOString(),
             'updated_at'              => optional($m->updated_at)->toISOString(),
         ];
