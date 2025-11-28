@@ -10,6 +10,7 @@ use Maatwebsite\Excel\Events\AfterSheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
@@ -27,37 +28,30 @@ class ProductReturnExport implements FromArray, WithStyles, WithEvents
         $this->return = $return;
     }
 
-    protected function dash($v): string
+    protected function dashIfEmpty($value): string
     {
-        return (is_null($v) || trim((string) $v) === '') ? '-' : (string) $v;
+        return (is_null($value) || trim((string) $value) === '') ? '-' : (string) $value;
     }
 
-    protected function formatAddress($address): string
-    {
-        if (is_array($address)) {
-            $parts = [
-                $address['detail_alamat'] ?? null,
-                $address['kelurahan'] ?? null,
-                $address['kecamatan'] ?? null,
-                $address['kota_kab'] ?? null,
-                $address['provinsi'] ?? null,
-                $address['kode_pos'] ?? null,
-            ];
-            $txt = implode(', ', array_filter($parts, fn ($x) => $x && $x !== '-'));
-            return $txt !== '' ? $txt : '-';
-        }
-        return $this->dash($address);
-    }
-
+    /**
+     * Ambil maksimal 3 path gambar dari field gambar
+     */
     protected function parseImagePaths($images): array
     {
         if (is_string($images) && str_starts_with($images, '[')) {
             $images = json_decode($images, true);
         }
-        $arr = is_array($images) ? $images : ((is_string($images) && $images !== '') ? [$images] : []);
+
+        $arr = [];
+        if (is_array($images)) {
+            $arr = $images;
+        } elseif (is_string($images) && $images !== '') {
+            $arr = [$images];
+        }
+
         $paths = [];
         foreach ($arr as $p) {
-            $p = preg_replace('#^/?storage/#', '', $p);
+            $p   = preg_replace('#^/?storage/#', '', $p);
             $abs = storage_path('app/public/' . ltrim($p, '/'));
             if (is_file($abs)) {
                 $paths[] = $abs;
@@ -66,82 +60,125 @@ class ProductReturnExport implements FromArray, WithStyles, WithEvents
                 break;
             }
         }
+
         return $paths;
     }
 
     public function array(): array
     {
-        // urutan kolom: ... Status Return, Alasan Ditolak, Alasan Cancelled, Batas Hold, Alasan Hold, Foto Barang, Bukti Pengiriman, Tanggal Dibuat, Tanggal Diupdate
+        // ===== HEADER (disamakan gaya dengan GaransiExport) =====
         $headers = [
             'No.',
             'No Return',
-            'Department',
-            'Karyawan',
+            'Tanggal Dibuat',
             'Customer',
-            'Kategori Customer',
-            'Phone',
-            'Alamat',
-            'Item Description',
-            'Pcs',
+            'Barcode',
+            'Brand',
+            'Category',
+            'Product',
+            'Warna',
+            'Pcs/item',
             'Alasan Return',
-            'Catatan',
             'Nominal',
+            'Karyawan',
+            'Department',
             'Status Pengajuan',
             'Status Produk',
             'Status Return',
-            'Alasan Ditolak',      // ⬅ baru
-            'Alasan Cancelled',    // ⬅ baru
             'Batas Hold',
             'Alasan Hold',
             'Foto Barang',
-            'Bukti Pengiriman',
-            'Tanggal Dibuat',
-            'Tanggal Diupdate',
+            'Bukti Pengiriman', // kolom gambar terakhir
         ];
 
         $rows = [
             array_fill(0, count($headers), ''),
             $headers,
         ];
+
+        // judul di tengah baris pertama
         $rows[0][(int) floor(count($headers) / 2)] = 'PRODUCT RETURN';
 
-        // kumpulkan path gambar
+        // kumpulkan path gambar untuk 1 return
         $this->productImagePaths  = $this->parseImagePaths($this->return->image);
         $this->deliveryImagePaths = $this->parseImagePaths($this->return->delivery_images);
 
         $no = 1;
-        foreach ($this->return->productsWithDetails() as $item) {
-            $desc = "{$item['brand_name']} – {$item['category_name']} – {$item['product_name']} " . ($item['color'] ?? '');
-            $qty  = (int) ($item['quantity'] ?? 0);
+
+        // ===== GROUPING PRODUK (Brand+Category+Product+Warna+Barcode) =====
+        $groupedItems = collect($this->return->productsWithDetails() ?? [])
+            ->groupBy(function ($item) {
+                return implode('|', [
+                    $item['brand_name']    ?? '',
+                    $item['category_name'] ?? '',
+                    $item['product_name']  ?? '',
+                    $item['color']         ?? '',
+                    $item['barcode']       ?? '',
+                ]);
+            })
+            ->map(function ($group) {
+                $first = $group->first();
+
+                $qtyTotal = collect($group)->sum(function ($i) {
+                    return (int) ($i['quantity'] ?? 0);
+                });
+
+                $first['quantity'] = $qtyTotal;
+
+                return $first;
+            })
+            ->values();
+
+        // ===== DATA BARIS DETAIL PRODUK (SUDAH DI-GROUP) =====
+        foreach ($groupedItems as $item) {
+            $brand    = $item['brand_name']    ?? '-';
+            $category = $item['category_name'] ?? '-';
+            $product  = $item['product_name']  ?? '-';
+            $color    = $item['color']         ?? '-';
+            $barcode  = $item['barcode']       ?? '-';
+            $qty      = (int) ($item['quantity'] ?? 0);
 
             $rows[] = [
                 $no++,
-                $this->dash($this->return->no_return),
-                $this->dash($this->return->department->name ?? null),
-                $this->dash($this->return->employee->name ?? null),
-                $this->dash($this->return->customer->name ?? null),
-                $this->dash($this->return->category->name ?? null),
-                $this->dash($this->return->phone ?? null),
-                $this->formatAddress($this->return->address),
-                $this->dash($desc),
-                $this->dash($qty),
-                $this->dash($this->return->reason ?? '-'),
-                $this->dash($this->return->note ?? '-'),
+                $this->dashIfEmpty($this->return->no_return),
+                $this->dashIfEmpty(optional($this->return->created_at)->format('Y-m-d H:i')),
+                $this->dashIfEmpty($this->return->customer->name ?? '-'),
+
+                $this->dashIfEmpty($barcode),
+                $this->dashIfEmpty($brand),
+                $this->dashIfEmpty($category),
+                $this->dashIfEmpty($product),
+                $this->dashIfEmpty($color),
+
+                $this->dashIfEmpty($qty),
+                $this->dashIfEmpty($this->return->reason ?? '-'),
+
                 'Rp ' . number_format((int) $this->return->amount, 0, ',', '.'),
-                $this->dash(match ($this->return->status_pengajuan) {
+
+                $this->dashIfEmpty($this->return->employee->name ?? '-'),
+                $this->dashIfEmpty($this->return->department->name ?? '-'),
+
+                // Status Pengajuan
+                $this->dashIfEmpty(match ($this->return->status_pengajuan) {
                     'pending'  => 'Pending',
                     'approved' => 'Disetujui',
                     'rejected' => 'Ditolak',
-                    default    => ucfirst((string) $this->return->status_pengajuan),
+                    default    => $this->return->status_pengajuan
+                        ? ucfirst((string) $this->return->status_pengajuan)
+                        : '-',
                 }),
-                $this->dash(match ($this->return->status_product) {
+                // Status Produk
+                $this->dashIfEmpty(match ($this->return->status_product) {
                     'pending'     => 'Pending',
                     'ready_stock' => 'Ready Stock',
                     'sold_out'    => 'Sold Out',
                     'rejected'    => 'Ditolak',
-                    default       => ucfirst((string) $this->return->status_product),
+                    default       => $this->return->status_product
+                        ? ucfirst((string) $this->return->status_product)
+                        : '-',
                 }),
-                $this->dash(match ($this->return->status_return) {
+                // Status Return
+                $this->dashIfEmpty(match ($this->return->status_return) {
                     'pending'    => 'Pending',
                     'confirmed'  => 'Confirmed',
                     'processing' => 'Processing',
@@ -150,16 +187,16 @@ class ProductReturnExport implements FromArray, WithStyles, WithEvents
                     'completed'  => 'Completed',
                     'cancelled'  => 'Cancelled',
                     'rejected'   => 'Ditolak',
-                    default      => ucfirst((string) $this->return->status_return),
+                    default      => $this->return->status_return
+                        ? ucfirst((string) $this->return->status_return)
+                        : '-',
                 }),
-                $this->dash($this->return->rejection_comment ?? '-'),  // ⬅ alasan ditolak
-                $this->dash($this->return->cancelled_comment ?? '-'),  // ⬅ alasan cancel
-                $this->dash(optional($this->return->on_hold_until)?->format('Y-m-d')),
-                $this->dash($this->return->on_hold_comment ?: '-'),
+
+                $this->dashIfEmpty(optional($this->return->on_hold_until)?->format('Y-m-d') ?? '-'),
+                $this->dashIfEmpty($this->return->on_hold_comment ?? '-'),
+
                 empty($this->productImagePaths)  ? '-' : '',
                 empty($this->deliveryImagePaths) ? '-' : '',
-                $this->dash(optional($this->return->created_at)->format('Y-m-d H:i')),
-                $this->dash(optional($this->return->updated_at)->format('Y-m-d H:i')),
             ];
         }
 
@@ -170,59 +207,62 @@ class ProductReturnExport implements FromArray, WithStyles, WithEvents
     {
         return [
             AfterSheet::class => function (AfterSheet $event) {
-                $sheet = $event->sheet->getDelegate();
-                $lastCol = $sheet->getHighestColumn();
+                $sheet        = $event->sheet->getDelegate();
+                $lastCol      = $sheet->getHighestColumn();
                 $lastColIndex = Coordinate::columnIndexFromString($lastCol);
 
-                // POSISI: Foto Barang = -3, Bukti Pengiriman = -2, terakhir 2 kolom tanggal
-                $productColIndex  = $lastColIndex - 3;
-                $deliveryColIndex = $lastColIndex - 2;
+                // Kolom: Foto Barang = kolom ke-2 dari belakang, Bukti Pengiriman = kolom terakhir
+                $productColIndex  = $lastColIndex - 1;
+                $deliveryColIndex = $lastColIndex;
 
                 $productCol  = Coordinate::stringFromColumnIndex($productColIndex);
                 $deliveryCol = Coordinate::stringFromColumnIndex($deliveryColIndex);
 
-                // range baris data
+                // data mulai baris 3
                 $startRow = 3;
                 $dataRows = max(0, count($this->return->productsWithDetails()));
-                if ($dataRows === 0) return;
+                if ($dataRows === 0) {
+                    return;
+                }
                 $endRow = $startRow + $dataRows - 1;
 
-                // set lebar dan tinggi
+                // set lebar dan tinggi baris
                 $sheet->getColumnDimension($productCol)->setWidth(40);
                 $sheet->getColumnDimension($deliveryCol)->setWidth(40);
+
                 for ($r = $startRow; $r <= $endRow; $r++) {
                     $sheet->getRowDimension($r)->setRowHeight(65);
                 }
 
-                // tanam foto barang
+                // tanam foto barang di baris pertama data
                 if (!empty($this->productImagePaths)) {
-                    $ox = 5;
+                    $offsetX = 5;
                     foreach (array_slice($this->productImagePaths, 0, 3) as $path) {
-                        $d = new Drawing();
-                        $d->setPath($path);
-                        $d->setWorksheet($sheet);
-                        $d->setCoordinates($productCol . $startRow);
-                        $d->setOffsetX($ox);
-                        $d->setOffsetY(3);
-                        $d->setHeight(55);
-                        $ox += 60;
+                        $drawing = new Drawing();
+                        $drawing->setPath($path);
+                        $drawing->setWorksheet($sheet);
+                        $drawing->setCoordinates($productCol . $startRow);
+                        $drawing->setOffsetX($offsetX);
+                        $drawing->setOffsetY(3);
+                        $drawing->setHeight(55);
+                        $offsetX += 60;
                     }
                 } else {
                     $sheet->setCellValue($productCol . $startRow, '-');
                 }
 
-                // tanam bukti pengiriman
+                // tanam bukti pengiriman di baris pertama data
                 if (!empty($this->deliveryImagePaths)) {
-                    $ox = 5;
+                    $offsetX = 5;
                     foreach (array_slice($this->deliveryImagePaths, 0, 3) as $path) {
-                        $d = new Drawing();
-                        $d->setPath($path);
-                        $d->setWorksheet($sheet);
-                        $d->setCoordinates($deliveryCol . $startRow);
-                        $d->setOffsetX($ox);
-                        $d->setOffsetY(3);
-                        $d->setHeight(55);
-                        $ox += 60;
+                        $drawing = new Drawing();
+                        $drawing->setPath($path);
+                        $drawing->setWorksheet($sheet);
+                        $drawing->setCoordinates($deliveryCol . $startRow);
+                        $drawing->setOffsetX($offsetX);
+                        $drawing->setOffsetY(3);
+                        $drawing->setHeight(55);
+                        $offsetX += 60;
                     }
                 } else {
                     $sheet->setCellValue($deliveryCol . $startRow, '-');
@@ -233,13 +273,15 @@ class ProductReturnExport implements FromArray, WithStyles, WithEvents
 
     public function styles(Worksheet $sheet)
     {
-        $lastCol = $sheet->getHighestColumn();
+        $lastCol    = $sheet->getHighestColumn();
+        $lastColIdx = Coordinate::columnIndexFromString($lastCol);
+        $highestRow = $sheet->getHighestRow();
 
         // Title
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'PRODUCT RETURN');
         $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
-            'font' => ['bold' => true, 'size' => 14],
+            'font'      => ['bold' => true, 'size' => 14],
             'alignment' => [
                 'horizontal' => Alignment::HORIZONTAL_CENTER,
                 'vertical'   => Alignment::VERTICAL_CENTER,
@@ -258,18 +300,15 @@ class ProductReturnExport implements FromArray, WithStyles, WithEvents
                 'fillType'   => Fill::FILL_SOLID,
                 'startColor' => ['rgb' => 'F0F0F0'],
             ],
-            'borders'   => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN]],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
         ]);
 
-        // Data + autosize (skip 2 kolom gambar)
-        $highestRow   = $sheet->getHighestRow();
-        $lastColIndex = Coordinate::columnIndexFromString($lastCol);
-
+        // Data rows
         for ($row = 3; $row <= $highestRow; $row++) {
-            for ($i = 1; $i <= $lastColIndex; $i++) {
+            for ($i = 1; $i <= $lastColIdx; $i++) {
                 $col = Coordinate::stringFromColumnIndex($i);
                 $sheet->getStyle("{$col}{$row}")->applyFromArray([
-                    'borders'   => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN]],
+                    'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
                     'alignment' => [
                         'horizontal' => Alignment::HORIZONTAL_CENTER,
                         'vertical'   => Alignment::VERTICAL_TOP,
@@ -279,13 +318,16 @@ class ProductReturnExport implements FromArray, WithStyles, WithEvents
             }
         }
 
-        $img1 = $lastColIndex - 3; // Foto Barang
-        $img2 = $lastColIndex - 2; // Bukti Pengiriman
-        for ($i = 1; $i <= $lastColIndex; $i++) {
-            if ($i === $img1 || $i === $img2) {
+        // Autosize semua kolom kecuali 2 kolom gambar (biar width 40 tetap)
+        $productColIndex  = $lastColIdx - 1;
+        $deliveryColIndex = $lastColIdx;
+
+        for ($i = 1; $i <= $lastColIdx; $i++) {
+            if ($i === $productColIndex || $i === $deliveryColIndex) {
                 continue;
             }
-            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($i))->setAutoSize(true);
+            $col = Coordinate::stringFromColumnIndex($i);
+            $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 
         return [];

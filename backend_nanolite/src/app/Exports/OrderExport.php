@@ -21,6 +21,9 @@ class OrderExport implements FromArray, WithStyles, WithEvents
     /** @var array<int,string> */
     protected array $imagePaths = [];
 
+    /** baris terakhir data detail (utk styling) */
+    protected int $dataEndRow = 0;
+
     public function __construct(Order $order)
     {
         $this->order = $order;
@@ -122,31 +125,29 @@ class OrderExport implements FromArray, WithStyles, WithEvents
             'No Order',
             'Tanggal Dibuat',
             'Tanggal Diupdate',
-            'Department',
-            'Karyawan',
             'Customer',
-            'Kategori Customer',
-            'Customer Program',
-            'Phone',
-            'Alamat',
-            'Item Description',
-            'Pcs',
+            'Barcode',
+            'Brand',
+            'Category',
+            'Product',
+            'Warna',
+            'Pcs/item',
             'Unit Price',
-            'Total Awal',
-            'Program Point',
-            'Reward Point',
             'Disc%',
-            'Penjelasan Diskon',
+            'Total Akhir',
             'Metode Pembayaran',
+            'Batas Tempo',
+            'Karyawan',
+            'Department',
+            'Customer Program',
+            'Kategori Customer',
             'Status Pembayaran',
             'Status Pengajuan',
             'Status Produk',
             'Status Order',
-            'Alasan Ditolak',
-            'Alasan Cancelled',
-            'Batas Hold',          // ⬅ baru
-            'Alasan Hold',         // ⬅ baru
-            'Bukti Pengiriman',    // ⬅ baru (gambar)
+            'Batas Hold',
+            'Alasan Hold',
+            'Bukti Pengiriman',
         ];
 
         $rows = [
@@ -160,78 +161,133 @@ class OrderExport implements FromArray, WithStyles, WithEvents
         // simpan path gambar delivery
         $this->imagePaths = $this->parseImagePaths($this->order->delivery_images);
 
-        // ===== DATA =====
-        $no = 1;
-        $diskon1 = (float) $this->order->diskon_1;
-        $diskon2 = (float) $this->order->diskon_2;
-        $diskonGabungan = collect([$diskon1, $diskon2])
+        // ===== DISKON (1–4) =====
+        $discounts = [
+            (float) ($this->order->diskon_1 ?? 0),
+            (float) ($this->order->diskon_2 ?? 0),
+            (float) ($this->order->diskon_3 ?? 0),
+            (float) ($this->order->diskon_4 ?? 0),
+        ];
+
+        $diskonGabungan = collect($discounts)
             ->filter(fn ($v) => $v > 0)
-            ->map(fn ($v) => "{$v}%")
+            ->map(function ($v) {
+                $v = rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.');
+                return $v . '%';
+            })
             ->implode(' + ') ?: '0%';
 
         $penjelasanDiskon = collect([
-            trim($this->order->penjelasan_diskon_1 ?? '-'),
-            trim($this->order->penjelasan_diskon_2 ?? '-'),
-        ])
-            ->filter()
-            ->implode(' + ');
+            trim($this->order->penjelasan_diskon_1 ?? ''),
+            trim($this->order->penjelasan_diskon_2 ?? ''),
+            trim($this->order->penjelasan_diskon_3 ?? ''),
+            trim($this->order->penjelasan_diskon_4 ?? ''),
+        ])->filter()->implode(' + ');
 
-        $subTotal = 0;
+        $no = 1;
+
+        // ===== GROUPING PRODUK (Brand+Category+Product+Warna+Barcode) =====
+        $groupedItems = collect($this->order->productsWithDetails() ?? [])
+            ->groupBy(function ($item) {
+                return implode('|', [
+                    $item['brand_name']    ?? '',
+                    $item['category_name'] ?? '',
+                    $item['product_name']  ?? '',
+                    $item['color']         ?? '',
+                    $item['barcode']       ?? '',
+                ]);
+            })
+            ->map(function ($group) {
+                $first = $group->first();
+
+                $qtyTotal = collect($group)->sum(function ($i) {
+                    return (int) ($i['quantity'] ?? 0);
+                });
+
+                $rawTotal = collect($group)->sum(function ($i) {
+                    $q = (int) ($i['quantity'] ?? 0);
+                    $p = (int) ($i['price'] ?? 0);
+                    return $q * $p;
+                });
+
+                $first['quantity']  = $qtyTotal;
+                $first['raw_total'] = $rawTotal;
+
+                return $first;
+            })
+            ->values();
+
+        // ===== HITUNG TOTAL KESELURUHAN DULU =====
+        $subTotal           = 0;
         $totalAfterDiscount = 0;
 
-        foreach ($this->order->productsWithDetails() as $item) {
-            $desc   = "{$item['brand_name']} – {$item['category_name']} – {$item['product_name']} {$item['color']}";
-            $qty    = (int) $item['quantity'];
-            $harga  = (int) $item['price'];
-            $totalAwal = $qty * $harga;
+        foreach ($groupedItems as $gi) {
+            $qty   = (int) ($gi['quantity'] ?? 0);
+            $harga = (int) ($gi['price'] ?? 0);
 
-            $afterFirst  = $totalAwal * (1 - ($diskon1 / 100));
-            $afterSecond = $afterFirst * (1 - ($diskon2 / 100));
-            $amount      = (int) round($afterSecond);
+            $totalAwal = (int) ($gi['raw_total'] ?? ($qty * $harga));
+            $subTotal += $totalAwal;
 
-            $subTotal           += $totalAwal;
-            $totalAfterDiscount += $amount;
+            $amount = (float) $totalAwal;
+            foreach ($discounts as $d) {
+                $d = max(0, min(100, (float) $d));
+                if ($d > 0) {
+                    $amount -= $amount * ($d / 100);
+                }
+            }
+            $totalAfterDiscount += (int) round($amount);
+        }
+
+        $discountAmount   = $subTotal - $totalAfterDiscount;
+        $dataRowsCount    = $groupedItems->count();
+        $this->dataEndRow = 2 + $dataRowsCount; // row 1 title, row 2 header
+
+        // ===== DATA BARIS DETAIL PRODUK (SUDAH DI-GROUP) =====
+        foreach ($groupedItems as $item) {
+            $brand    = $item['brand_name']    ?? '-';
+            $category = $item['category_name'] ?? '-';
+            $product  = $item['product_name']  ?? '-';
+            $color    = $item['color']         ?? '-';
+
+            $qty   = (int) ($item['quantity'] ?? 0);
+            $harga = (int) ($item['price'] ?? 0);
 
             $rows[] = [
                 $no++,
                 $this->dashIfEmpty($this->order->no_order),
                 $this->dashIfEmpty(optional($this->order->created_at)->format('Y-m-d H:i')),
                 $this->dashIfEmpty(optional($this->order->updated_at)->format('Y-m-d H:i')),
-                $this->dashIfEmpty($this->order->department->name ?? null),
-                $this->dashIfEmpty($this->order->employee->name ?? null),
                 $this->dashIfEmpty($this->order->customer->name ?? null),
-                $this->dashIfEmpty($this->order->customerCategory->name ?? null),
-                $this->dashIfEmpty(optional($this->order->customer?->customerProgram)->name ?? 'Tidak Ikut Program'),
-                $this->dashIfEmpty($this->order->phone ?? null),
-                $this->dashIfEmpty(
-                    is_array($this->order->address)
-                        ? ($this->order->address['detail_alamat'] ?? null)
-                        : ($this->order->address ?? null)
-                ),
-                $this->dashIfEmpty($desc),
+
+                $this->dashIfEmpty($item['barcode'] ?? null),
+                $this->dashIfEmpty($brand),
+                $this->dashIfEmpty($category),
+                $this->dashIfEmpty($product),
+                $this->dashIfEmpty($color),
+
                 $this->dashIfEmpty($qty),
-                $this->dashIfEmpty($harga),
-                $this->dashIfEmpty($totalAwal),
-                $this->dashIfEmpty($this->order->jumlah_program),
-                $this->dashIfEmpty($this->order->reward_point),
+                'Rp ' . number_format($harga, 0, ',', '.'),
+
                 $this->dashIfEmpty($diskonGabungan),
-                $this->dashIfEmpty($penjelasanDiskon),
+                'Rp ' . number_format($totalAfterDiscount, 0, ',', '.'),
+
                 $this->dashIfEmpty($this->order->payment_method),
+                $this->dashIfEmpty(optional($this->order->payment_due_until)?->format('Y-m-d') ?? '-'),
+                $this->dashIfEmpty($this->order->employee->name ?? null),
+                $this->dashIfEmpty($this->order->department->name ?? null),
+                $this->dashIfEmpty(optional($this->order->customer?->customerProgram)->name ?? 'Tidak Ikut Program'),
+                $this->dashIfEmpty($this->order->customerCategory->name ?? null),
                 $this->mapStatusPembayaran($this->order->status_pembayaran ?? null),
                 $this->mapStatusPengajuan($this->order->status_pengajuan ?? null),
                 $this->mapStatusProduct($this->order->status_product ?? null),
                 $this->mapStatusOrder($this->order->status_order ?? null),
-                $this->dashIfEmpty($this->order->rejection_comment ?? '-'),
-                $this->dashIfEmpty($this->order->cancelled_comment ?? '-'),
                 $this->dashIfEmpty(optional($this->order->on_hold_until)?->format('Y-m-d') ?? '-'),
                 $this->dashIfEmpty($this->order->on_hold_comment ?? '-'),
-                empty($this->imagePaths) ? '-' : '', // kolom gambar (diisi di AfterSheet)
+                empty($this->imagePaths) ? '-' : '',
             ];
         }
 
-        $discountAmount = $subTotal - $totalAfterDiscount;
-
-        // ===== RINGKASAN TOTAL =====
+        // ===== RINGKASAN TOTAL (TABEL TERPISAH) =====
         $colCount = count($headers);
 
         // dua baris kosong
@@ -263,8 +319,8 @@ class OrderExport implements FromArray, WithStyles, WithEvents
     {
         return [
             AfterSheet::class => function (AfterSheet $event) {
-                $sheet    = $event->sheet->getDelegate();
-                $lastCol  = $sheet->getHighestColumn();
+                $sheet        = $event->sheet->getDelegate();
+                $lastCol      = $sheet->getHighestColumn();
                 $lastColIndex = Coordinate::columnIndexFromString($lastCol);
 
                 // data mulai baris 3 sampai 3 + jumlah item - 1
@@ -305,14 +361,14 @@ class OrderExport implements FromArray, WithStyles, WithEvents
 
     public function styles(Worksheet $sheet)
     {
-        $lastCol     = $sheet->getHighestColumn();
-        $lastColIdx  = Coordinate::columnIndexFromString($lastCol);
-        $highestRow  = $sheet->getHighestRow();
+        $lastCol    = $sheet->getHighestColumn();
+        $lastColIdx = Coordinate::columnIndexFromString($lastCol);
+        $highestRow = $sheet->getHighestRow();
 
-        // Judul: merge A1:LastCol1
+        // Judul
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
-            'font' => ['bold' => true, 'size' => 14],
+            'font'      => ['bold' => true, 'size' => 14],
             'alignment' => [
                 'horizontal' => Alignment::HORIZONTAL_CENTER,
                 'vertical'   => Alignment::VERTICAL_CENTER,
@@ -334,8 +390,10 @@ class OrderExport implements FromArray, WithStyles, WithEvents
             'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
         ]);
 
-        // Data rows (3..highestRow)
-        for ($row = 3; $row <= $highestRow; $row++) {
+        // ===== STYLE TABEL DETAIL (sampai dataEndRow saja) =====
+        $dataEndRow = $this->dataEndRow > 0 ? $this->dataEndRow : $highestRow;
+
+        for ($row = 3; $row <= $dataEndRow; $row++) {
             for ($i = 1; $i <= $lastColIdx; $i++) {
                 $col = Coordinate::stringFromColumnIndex($i);
                 $sheet->getStyle("{$col}{$row}")->applyFromArray([
@@ -346,6 +404,46 @@ class OrderExport implements FromArray, WithStyles, WithEvents
                         'wrapText'   => true,
                     ],
                 ]);
+            }
+        }
+
+        // ===== STYLE TABEL RINGKASAN (terpisah) =====
+        if ($dataEndRow < $highestRow) {
+            $labelColIdx  = $lastColIdx - 1;
+            $labelCol     = Coordinate::stringFromColumnIndex($labelColIdx);
+            $valueCol     = Coordinate::stringFromColumnIndex($lastColIdx);
+
+            // ringkasan selalu 3 baris terakhir (setelah 2 baris kosong)
+            $summaryStart = $dataEndRow + 3; // lompat 2 baris kosong
+            if ($summaryStart <= $highestRow) {
+                // bersihkan border di semua kolom ringkasan biar ga nyatu
+                for ($row = $summaryStart; $row <= $highestRow; $row++) {
+                    for ($i = 1; $i <= $lastColIdx; $i++) {
+                        $col = Coordinate::stringFromColumnIndex($i);
+                        $sheet->getStyle("{$col}{$row}")->applyFromArray([
+                            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_NONE]],
+                        ]);
+                    }
+                }
+
+                // kasih border hanya di 2 kolom (label & value)
+                $sheet->getStyle("{$labelCol}{$summaryStart}:{$valueCol}{$highestRow}")
+                    ->applyFromArray([
+                        'font'      => ['bold' => false],
+                        'alignment' => [
+                            'horizontal' => Alignment::HORIZONTAL_LEFT,
+                            'vertical'   => Alignment::VERTICAL_CENTER,
+                            'wrapText'   => true,
+                        ],
+                        'borders'   => [
+                            'allBorders' => ['borderStyle' => Border::BORDER_THIN],
+                        ],
+                    ]);
+
+                // khusus kolom nilai → rata kanan
+                $sheet->getStyle("{$valueCol}{$summaryStart}:{$valueCol}{$highestRow}")
+                    ->getAlignment()
+                    ->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             }
         }
 

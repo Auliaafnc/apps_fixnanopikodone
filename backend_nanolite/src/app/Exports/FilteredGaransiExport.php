@@ -19,11 +19,18 @@ class FilteredGaransiExport implements FromArray, WithStyles, WithEvents
     protected array $filters;
 
     /** @var array<int, array<int,string>> rowIndex => [paths...] */
-    protected array $imageMap = [];
+    protected array $productImageMap = [];   // foto barang
+    /** @var array<int, array<int,string>> rowIndex => [paths...] */
+    protected array $deliveryImageMap = [];  // bukti pengiriman
 
     public function __construct(array $filters = [])
     {
         $this->filters = $filters;
+    }
+
+    protected function dashIfEmpty($value): string
+    {
+        return (is_null($value) || trim((string) $value) === '') ? '-' : (string) $value;
     }
 
     protected function formatAddress($address): string
@@ -31,156 +38,270 @@ class FilteredGaransiExport implements FromArray, WithStyles, WithEvents
         if (is_array($address)) {
             $parts = [
                 $address['detail_alamat'] ?? null,
-                $address['kelurahan'] ?? null,
-                $address['kecamatan'] ?? null,
-                $address['kota_kab'] ?? null,
-                $address['provinsi'] ?? null,
-                $address['kode_pos'] ?? null,
+                $address['kelurahan']     ?? null,
+                $address['kecamatan']     ?? null,
+                $address['kota_kab']      ?? null,
+                $address['provinsi']      ?? null,
+                $address['kode_pos']      ?? null,
             ];
             $txt = implode(', ', array_filter($parts, fn ($v) => $v && $v !== '-'));
             return $txt !== '' ? $txt : '-';
         }
-        return $address ?: '-';
+        return $this->dashIfEmpty($address);
     }
 
+    /**
+     * Ambil max 3 path gambar dari field gambar
+     */
     protected function parseImagePaths($images): array
     {
         if (is_string($images) && str_starts_with($images, '[')) {
             $images = json_decode($images, true);
         }
         $arr = [];
-        if (is_array($images)) $arr = $images;
-        elseif (is_string($images) && $images !== '') $arr = [$images];
+        if (is_array($images)) {
+            $arr = $images;
+        } elseif (is_string($images) && $images !== '') {
+            $arr = [$images];
+        }
 
         $paths = [];
         foreach ($arr as $p) {
-            $p = preg_replace('#^/?storage/#', '', $p);
+            $p   = preg_replace('#^/?storage/#', '', $p);
             $abs = storage_path('app/public/' . ltrim($p, '/'));
-            if (is_file($abs)) $paths[] = $abs;
-            if (count($paths) >= 3) break;
+            if (is_file($abs)) {
+                $paths[] = $abs;
+            }
+            if (count($paths) >= 3) {
+                break;
+            }
         }
         return $paths;
     }
 
+    /**
+     * Filter manual by brand/category/product dari productsWithDetails()
+     */
     protected function applyManualFilters($garansis)
     {
         if (!empty($this->filters['brand_id'])) {
             $garansis = $garansis->filter(function ($g) {
                 foreach ($g->productsWithDetails() as $i) {
-                    if (($i['brand_id'] ?? null) == $this->filters['brand_id']) return true;
+                    if (($i['brand_id'] ?? null) == $this->filters['brand_id']) {
+                        return true;
+                    }
                 }
                 return false;
             });
         }
+
         if (!empty($this->filters['category_id'])) {
             $garansis = $garansis->filter(function ($g) {
                 foreach ($g->productsWithDetails() as $i) {
-                    if (($i['category_id'] ?? null) == $this->filters['category_id']) return true;
+                    if (($i['category_id'] ?? null) == $this->filters['category_id']) {
+                        return true;
+                    }
                 }
                 return false;
             });
         }
+
         if (!empty($this->filters['product_id'])) {
             $garansis = $garansis->filter(function ($g) {
                 foreach ($g->productsWithDetails() as $i) {
-                    if (($i['product_id'] ?? null) == $this->filters['product_id']) return true;
+                    if (($i['product_id'] ?? null) == $this->filters['product_id']) {
+                        return true;
+                    }
                 }
                 return false;
             });
         }
+
         return $garansis;
     }
 
     public function array(): array
     {
-        $q = Garansi::with(['customer.customerCategory','employee','department'])
-            ->orderBy('created_at', 'asc');
+        $q = Garansi::with([
+            'customer.customerCategory',
+            'employee',
+            'department',
+        ])->orderBy('created_at', 'asc');
 
-        if (!empty($this->filters['department_id']))          $q->where('department_id', $this->filters['department_id']);
-        if (!empty($this->filters['customer_id']))            $q->where('customer_id', $this->filters['customer_id']);
-        if (!empty($this->filters['employee_id']))            $q->where('employee_id', $this->filters['employee_id']);
-        if (!empty($this->filters['customer_categories_id'])) $q->where('customer_categories_id', $this->filters['customer_categories_id']);
-        if (!empty($this->filters['status_pengajuan']))       $q->where('status_pengajuan', $this->filters['status_pengajuan']);
-        if (!empty($this->filters['status_product']))         $q->where('status_product', $this->filters['status_product']);
-        if (!empty($this->filters['status_garansi']))         $q->where('status_garansi', $this->filters['status_garansi']);
+        // ===== FILTER DARI FORM EXPORT =====
+        if (!empty($this->filters['department_id'])) {
+            $q->where('department_id', $this->filters['department_id']);
+        }
+        if (!empty($this->filters['customer_id'])) {
+            $q->where('customer_id', $this->filters['customer_id']);
+        }
+        if (!empty($this->filters['employee_id'])) {
+            $q->where('employee_id', $this->filters['employee_id']);
+        }
+        if (!empty($this->filters['customer_categories_id'])) {
+            $q->where('customer_categories_id', $this->filters['customer_categories_id']);
+        }
+
+        // ➕ filter status
+        if (!empty($this->filters['status_pengajuan'])) {
+            $q->where('status_pengajuan', $this->filters['status_pengajuan']);
+        }
+        if (!empty($this->filters['status_product'])) {
+            $q->where('status_product', $this->filters['status_product']);
+        }
+        if (!empty($this->filters['status_garansi'])) {
+            $q->where('status_garansi', $this->filters['status_garansi']);
+        }
+        // kalau di tabel garansi ada status_order, kita ikutkan
+        if (!empty($this->filters['status_order'])) {
+            $q->where('status_order', $this->filters['status_order']);
+        }
+
+        // ➕ filter tanggal dibuat (created_at)
+        if (!empty($this->filters['created_from'])) {
+            $q->whereDate('created_at', '>=', $this->filters['created_from']);
+        }
+        if (!empty($this->filters['created_until'])) {
+            $q->whereDate('created_at', '<=', $this->filters['created_until']);
+        }
 
         $garansis = $this->applyManualFilters($q->get());
 
+        // ===== HEADER (gaya mirip Order / FilteredOrdersExport) =====
         $headers = [
             'No.',
             'No Garansi',
+            'Tanggal Dibuat',
             'Tanggal Pembelian',
             'Tanggal Klaim',
-            'Department',
-            'Karyawan',
             'Customer',
-            'Kategori Customer',
-            'Phone',
-            'Alamat',
-            'Item Description',
-            'Pcs',
+            'Barcode',
+            'Brand',
+            'Category',
+            'Product',
+            'Warna',
+            'Pcs/item',
             'Alasan Klaim',
-            'Catatan',
+            'Karyawan',
+            'Department',
+            'Kategori Customer',
             'Status Pengajuan',
             'Status Produk',
             'Status Garansi',
-            'Komentar Ditolak',     // ⬅ baru
-            'Komentar Cancelled',   // ⬅ baru
             'Batas Hold',
             'Alasan Hold',
-            'Tanggal Dibuat',
-            'Tanggal Diupdate',
-            'Bukti Pengiriman',
+            'Foto Barang',
+            'Bukti Pengiriman', // 2 kolom gambar terakhir
         ];
 
         $rows = [
-            array_pad([], max(1, count($headers) - 12), ''),
+            array_fill(0, count($headers), ''),
             $headers,
         ];
         $rows[0][(int) floor(count($headers) / 2)] = 'GARANSI';
 
-        $no = 1;
+        $no         = 1;
         $startRow   = 3;
         $currentRow = $startRow;
 
         foreach ($garansis as $g) {
-            $items = $g->productsWithDetails();
-            $desc  = collect($items)->map(function ($i) {
-                $name = "{$i['brand_name']} – {$i['category_name']} – {$i['product_name']}";
-                $color = $i['color'] ?? '';
-                $qty = (int) ($i['quantity'] ?? 0);
-                return trim("{$name} {$color} ({$qty} pcs)");
-            })->implode("\n");
-            $totalPcs = collect($items)->sum(fn ($i) => (int) ($i['quantity'] ?? 0));
+            $items = $g->productsWithDetails() ?? [];
+
+            // group per kombinasi Brand+Category+Product+Warna+Barcode
+            $groupedItems = collect($items)
+                ->groupBy(function ($item) {
+                    return implode('|', [
+                        $item['brand_name']    ?? '',
+                        $item['category_name'] ?? '',
+                        $item['product_name']  ?? '',
+                        $item['color']         ?? '',
+                        $item['barcode']       ?? '',
+                    ]);
+                })
+                ->map(function ($group) {
+                    $first = $group->first();
+
+                    $qtyTotal = collect($group)->sum(function ($i) {
+                        return (int) ($i['quantity'] ?? 0);
+                    });
+
+                    $first['quantity'] = $qtyTotal;
+
+                    return $first;
+                })
+                ->values();
+
+            $brandList    = [];
+            $categoryList = [];
+            $productList  = [];
+            $colorList    = [];
+            $barcodeList  = [];
+            $qtyList      = [];
+
+            foreach ($groupedItems as $item) {
+                $brand    = $item['brand_name']    ?? '-';
+                $category = $item['category_name'] ?? '-';
+                $product  = $item['product_name']  ?? '-';
+                $color    = $item['color']         ?? '-';
+                $barcode  = $item['barcode']       ?? '-';
+                $qty      = (int) ($item['quantity'] ?? 0);
+
+                $brandList[]    = $brand;
+                $categoryList[] = $category;
+                $productList[]  = $product;
+                $colorList[]    = $color;
+                $barcodeList[]  = $barcode;
+                $qtyList[]      = (string) $qty;
+            }
 
             // simpan image paths untuk baris ini
-            $this->imageMap[$currentRow] = $this->parseImagePaths($g->delivery_images);
+            $this->productImageMap[$currentRow]  = $this->parseImagePaths($g->image);              // foto barang
+            $this->deliveryImageMap[$currentRow] = $this->parseImagePaths($g->delivery_images);    // bukti pengiriman
 
             $rows[] = [
                 $no++,
-                $g->no_garansi ?? '-',
-                optional($g->purchase_date)->format('Y-m-d') ?? '-',
-                optional($g->claim_date)->format('Y-m-d') ?? '-',
-                $g->department->name ?? '-',
-                $g->employee->name ?? '-',
-                $g->customer->name ?? '-',
-                $g->customer?->customerCategory?->name ?? '-',
-                $g->phone ?? '-',
-                $this->formatAddress($g->address),
-                $desc ?: '-',
-                $totalPcs ?: 0,
-                $g->reason ?? '-',
-                $g->note ?? '-',
-                $g->status_pengajuan ?? $g->status ?? '-',
-                $g->status_product ?? '-',
-                $g->status_garansi ?? '-',
-                $g->rejection_comment ?: '-',   // alasan ditolak
-                $g->cancelled_comment ?: '-',   // alasan cancel
-                optional($g->on_hold_until)->format('Y-m-d') ?? '-',
-                $g->on_hold_comment ?: '-',
-                optional($g->created_at)->format('Y-m-d H:i'),
-                optional($g->updated_at)->format('Y-m-d H:i'),
-                empty($this->imageMap[$currentRow]) ? '-' : '',
+                $this->dashIfEmpty($g->no_garansi),
+                $this->dashIfEmpty(optional($g->created_at)->format('Y-m-d H:i')),
+                $this->dashIfEmpty(optional($g->purchase_date)?->format('Y-m-d') ?? '-'),
+                $this->dashIfEmpty(optional($g->claim_date)?->format('Y-m-d') ?? '-'),
+                $this->dashIfEmpty($g->customer->name ?? '-'),
+
+                // multiline kolom item detail
+                empty($barcodeList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($b) => $this->dashIfEmpty($b), $barcodeList)),
+                empty($brandList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $brandList)),
+                empty($categoryList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $categoryList)),
+                empty($productList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $productList)),
+                empty($colorList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $colorList)),
+
+                empty($qtyList)
+                    ? '-'
+                    : implode("\n", $qtyList),
+
+                $this->dashIfEmpty($g->reason ?? '-'),
+
+                $this->dashIfEmpty($g->employee->name ?? '-'),
+                $this->dashIfEmpty($g->department->name ?? '-'),
+                $this->dashIfEmpty($g->customer?->customerCategory->name ?? '-'),
+
+                $this->dashIfEmpty($g->status_pengajuan ?? $g->status ?? '-'),
+                $this->dashIfEmpty($g->status_product ?? '-'),
+                $this->dashIfEmpty($g->status_garansi ?? '-'),
+
+                $this->dashIfEmpty(optional($g->on_hold_until)?->format('Y-m-d') ?? '-'),
+                $this->dashIfEmpty($g->on_hold_comment ?? '-'),
+
+                empty($this->productImageMap[$currentRow])  ? '-' : '',
+                empty($this->deliveryImageMap[$currentRow]) ? '-' : '',
             ];
 
             $currentRow++;
@@ -193,30 +314,56 @@ class FilteredGaransiExport implements FromArray, WithStyles, WithEvents
     {
         return [
             AfterSheet::class => function (AfterSheet $event) {
-                $sheet = $event->sheet->getDelegate();
-                $lastCol = $sheet->getHighestColumn();
-                $lastColIndex = Coordinate::columnIndexFromString($lastCol);
+                $sheet       = $event->sheet->getDelegate();
+                $lastCol     = $sheet->getHighestColumn();
+                $lastColIdx  = Coordinate::columnIndexFromString($lastCol);
 
-                $imgColIndex = $lastColIndex;
-                $imgCol = Coordinate::stringFromColumnIndex($imgColIndex);
+                // Foto Barang = kolom ke-2 dari belakang, Bukti Pengiriman = kolom terakhir
+                $fotoColIndex     = $lastColIdx - 1;
+                $deliveryColIndex = $lastColIdx;
 
-                // set lebar kolom gambar & tanam thumbnail
-                $sheet->getColumnDimension($imgCol)->setWidth(40);
+                $fotoCol     = Coordinate::stringFromColumnIndex($fotoColIndex);
+                $deliveryCol = Coordinate::stringFromColumnIndex($deliveryColIndex);
 
-                foreach ($this->imageMap as $row => $paths) {
+                // set lebar kolom gambar
+                $sheet->getColumnDimension($fotoCol)->setWidth(40);
+                $sheet->getColumnDimension($deliveryCol)->setWidth(40);
+
+                // tanam foto barang
+                foreach ($this->productImageMap as $row => $paths) {
+                    $sheet->getRowDimension($row)->setRowHeight(65);
                     if (empty($paths)) {
-                        $sheet->setCellValue($imgCol . $row, '-');
+                        $sheet->setCellValue($fotoCol . $row, '-');
                         continue;
                     }
-
-                    $sheet->getRowDimension($row)->setRowHeight(65);
 
                     $offsetX = 5;
                     foreach (array_slice($paths, 0, 3) as $path) {
                         $drawing = new Drawing();
                         $drawing->setPath($path);
                         $drawing->setWorksheet($sheet);
-                        $drawing->setCoordinates($imgCol . $row);
+                        $drawing->setCoordinates($fotoCol . $row);
+                        $drawing->setOffsetX($offsetX);
+                        $drawing->setOffsetY(3);
+                        $drawing->setHeight(55);
+                        $offsetX += 60;
+                    }
+                }
+
+                // tanam bukti pengiriman
+                foreach ($this->deliveryImageMap as $row => $paths) {
+                    $sheet->getRowDimension($row)->setRowHeight(65);
+                    if (empty($paths)) {
+                        $sheet->setCellValue($deliveryCol . $row, '-');
+                        continue;
+                    }
+
+                    $offsetX = 5;
+                    foreach (array_slice($paths, 0, 3) as $path) {
+                        $drawing = new Drawing();
+                        $drawing->setPath($path);
+                        $drawing->setWorksheet($sheet);
+                        $drawing->setCoordinates($deliveryCol . $row);
                         $drawing->setOffsetX($offsetX);
                         $drawing->setOffsetY(3);
                         $drawing->setHeight(55);
@@ -229,13 +376,15 @@ class FilteredGaransiExport implements FromArray, WithStyles, WithEvents
 
     public function styles(Worksheet $sheet)
     {
-        $lastCol = $sheet->getHighestColumn();
+        $lastCol     = $sheet->getHighestColumn();
+        $lastColIdx  = Coordinate::columnIndexFromString($lastCol);
+        $highestRow  = $sheet->getHighestRow();
 
         // judul
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'GARANSI');
         $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
-            'font' => ['bold' => true, 'size' => 14],
+            'font'      => ['bold' => true, 'size' => 14],
             'alignment' => [
                 'horizontal' => Alignment::HORIZONTAL_CENTER,
                 'vertical'   => Alignment::VERTICAL_CENTER,
@@ -258,10 +407,8 @@ class FilteredGaransiExport implements FromArray, WithStyles, WithEvents
         ]);
 
         // data
-        $highestRow   = $sheet->getHighestRow();
-        $lastColIndex = Coordinate::columnIndexFromString($lastCol);
         for ($row = 3; $row <= $highestRow; $row++) {
-            for ($i = 1; $i <= $lastColIndex; $i++) {
+            for ($i = 1; $i <= $lastColIdx; $i++) {
                 $col = Coordinate::stringFromColumnIndex($i);
                 $sheet->getStyle("{$col}{$row}")->applyFromArray([
                     'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
@@ -274,8 +421,14 @@ class FilteredGaransiExport implements FromArray, WithStyles, WithEvents
             }
         }
 
-        // autosize kecuali kolom gambar
-        for ($i = 1; $i <= $lastColIndex - 1; $i++) {
+        // autosize kecuali 2 kolom gambar (biar width 40 tetap)
+        $fotoColIndex     = $lastColIdx - 1;
+        $deliveryColIndex = $lastColIdx;
+
+        for ($i = 1; $i <= $lastColIdx; $i++) {
+            if ($i === $fotoColIndex || $i === $deliveryColIndex) {
+                continue;
+            }
             $col = Coordinate::stringFromColumnIndex($i);
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }

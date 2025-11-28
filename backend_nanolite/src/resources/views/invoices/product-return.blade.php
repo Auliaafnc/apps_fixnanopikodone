@@ -188,11 +188,6 @@
                         <p>Alasan Hold: {{ $return->on_hold_comment ?? '-' }}</p>
                         <p>Batas Hold: {{ optional($return->on_hold_until)->format('d/m/Y') ?? '-' }}</p>
                     @endif
-
-                    @if(!empty($return->delivered_at) || !empty($return->delivered_by))
-                        <p>Delivered By: {{ optional($return->deliveredBy)->name ?? ($return->delivered_by ?? '-') }}</p>
-                        <p>Delivered At: {{ optional($return->delivered_at)->format('d/m/Y H:i') ?? '-' }}</p>
-                    @endif
                 </section>
             </td>
         </tr>
@@ -212,20 +207,6 @@
                         </div>
                     @else
                         <p class="muted">Tidak ada foto.</p>
-                    @endif
-                </div>
-            </td>
-            <td>
-                <div class="media-block">
-                    <h3>Bukti Pengiriman</h3>
-                    @if(count($buktiKirimPaths))
-                        <div class="grid-photos">
-                            @foreach($buktiKirimPaths as $p)
-                                <img src="{{ $p }}" alt="Bukti Pengiriman">
-                            @endforeach
-                        </div>
-                    @else
-                        <p class="muted">Tidak ada bukti pengiriman.</p>
                     @endif
                 </div>
             </td>

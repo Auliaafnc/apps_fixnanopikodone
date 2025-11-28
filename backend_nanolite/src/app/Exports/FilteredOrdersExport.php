@@ -119,8 +119,10 @@ class FilteredOrdersExport implements FromArray, WithStyles, WithEvents
             'customer.customerCategory',
             'employee',
             'customerProgram',
+            'department',
         ]);
 
+        // ===== FILTER DARI FORM EXPORT =====
         if (!empty($this->filters['customer_id'])) {
             $query->where('customer_id', $this->filters['customer_id']);
         }
@@ -143,16 +145,38 @@ class FilteredOrdersExport implements FromArray, WithStyles, WithEvents
             $query->where('status_pembayaran', $this->filters['status_pembayaran']);
         }
 
+        // ➕ filter status_pengajuan
+        if (!empty($this->filters['status_pengajuan'])) {
+            $query->where('status_pengajuan', $this->filters['status_pengajuan']);
+        }
+
+        // ➕ filter status_order
+        if (!empty($this->filters['status_order'])) {
+            $query->where('status_order', $this->filters['status_order']);
+        }
+
+        // ➕ filter status_product
+        if (!empty($this->filters['status_product'])) {
+            $query->where('status_product', $this->filters['status_product']);
+        }
+
+        // filter diskon / reward / program
         if (isset($this->filters['has_diskon'])) {
             $query->where('diskons_enabled', $this->filters['has_diskon'] === 'ya');
         }
-
         if (isset($this->filters['has_program_point'])) {
             $query->where('program_enabled', $this->filters['has_program_point'] === 'ya');
         }
-
         if (isset($this->filters['has_reward_point'])) {
             $query->where('reward_enabled', $this->filters['has_reward_point'] === 'ya');
+        }
+
+        // filter tanggal dibuat (created_at)
+        if (!empty($this->filters['created_from'])) {
+            $query->whereDate('created_at', '>=', $this->filters['created_from']);
+        }
+        if (!empty($this->filters['created_until'])) {
+            $query->whereDate('created_at', '<=', $this->filters['created_until']);
         }
 
         $orders = $query->get();
@@ -193,38 +217,36 @@ class FilteredOrdersExport implements FromArray, WithStyles, WithEvents
             });
         }
 
-        // ===== HEADER =====
+        // ===== HEADER (Item Description dipisah jadi 4 kolom + Total Discount) =====
         $headers = [
             'No.',
             'No Order',
             'Tanggal Dibuat',
             'Tanggal Diupdate',
-            'Department',
-            'Karyawan',
             'Customer',
-            'Kategori Customer',
-            'Customer Program',
-            'Phone',
-            'Alamat',
-            'Item Description',
-            'Pcs',
+            'Barcode',
+            'Brand',
+            'Category',
+            'Product',
+            'Warna',
+            'Pcs/item',
             'Unit Price',
-            'Total Awal',
-            'Program Point',
-            'Reward Point',
             'Disc%',
-            'Penjelasan Diskon',
+            'Total Discount',   // kolom baru
             'Total Akhir',
             'Metode Pembayaran',
+            'Batas Tempo',
+            'Karyawan',
+            'Department',
+            'Customer Program',
+            'Kategori Customer',
             'Status Pembayaran',
             'Status Pengajuan',
             'Status Produk',
             'Status Order',
-            'Alasan Ditolak',
-            'Alasan Cancelled',
-            'Batas Hold',          // ⬅ baru
-            'Alasan Hold',         // ⬅ baru
-            'Bukti Pengiriman',    // ⬅ baru (gambar)
+            'Batas Hold',
+            'Alasan Hold',
+            'Bukti Pengiriman',
         ];
 
         $rows = [
@@ -239,36 +261,95 @@ class FilteredOrdersExport implements FromArray, WithStyles, WithEvents
         $currentRow = $startRow;
 
         foreach ($orders as $order) {
-            $diskon1 = (float) $order->diskon_1;
-            $diskon2 = (float) $order->diskon_2;
-            $diskonGabungan = collect([$diskon1, $diskon2])
+            // diskon 1–4 (sama logika OrderExport)
+            $discounts = [
+                (float) ($order->diskon_1 ?? 0),
+                (float) ($order->diskon_2 ?? 0),
+                (float) ($order->diskon_3 ?? 0),
+                (float) ($order->diskon_4 ?? 0),
+            ];
+
+            $diskonGabungan = collect($discounts)
                 ->filter(fn ($v) => $v > 0)
-                ->map(fn ($v) => "{$v}%")
+                ->map(function ($v) {
+                    $v = rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.');
+                    return $v . '%';
+                })
                 ->implode(' + ') ?: '0%';
 
-            $penjelasanDiskon = collect([
-                trim($order->penjelasan_diskon_1 ?? '-'),
-                trim($order->penjelasan_diskon_2 ?? '-'),
-            ])->filter()->implode(' + ');
+            // group produk per order (Brand+Category+Product+Color+Barcode)
+            $groupedItems = collect($order->productsWithDetails() ?? [])
+                ->groupBy(function ($item) {
+                    return implode('|', [
+                        $item['brand_name']    ?? '',
+                        $item['category_name'] ?? '',
+                        $item['product_name']  ?? '',
+                        $item['color']         ?? '',
+                        $item['barcode']       ?? '',
+                    ]);
+                })
+                ->map(function ($group) {
+                    $first = $group->first();
 
-            $deskripsiProduk = [];
-            $hargaProduk     = [];
-            $totalPcs        = 0;
-            $totalAwalSemuaProduk = 0;
+                    $qtyTotal = collect($group)->sum(fn ($i) => (int) ($i['quantity'] ?? 0));
+                    $rawTotal = collect($group)->sum(function ($i) {
+                        $q = (int) ($i['quantity'] ?? 0);
+                        $p = (int) ($i['price'] ?? 0);
+                        return $q * $p;
+                    });
 
-            foreach ($order->productsWithDetails() as $item) {
-                $desc  = "{$item['brand_name']} – {$item['category_name']} – {$item['product_name']} {$item['color']}";
-                $qty   = (int) $item['quantity'];
-                $harga = (int) $item['price'];
-                $totalAwal = $qty * $harga;
+                    $first['quantity']  = $qtyTotal;
+                    $first['raw_total'] = $rawTotal;
 
-                $totalPcs += $qty;
-                $totalAwalSemuaProduk += $totalAwal;
+                    return $first;
+                })
+                ->values();
 
-                $deskripsiProduk[] = "$desc ({$qty} pcs)";
-                $hargaProduk[]     = "Rp " . number_format($harga, 0, ',', '.') .
-                    " x {$qty} = Rp " . number_format($totalAwal, 0, ',', '.');
+            // siapkan list per kolom (multiline)
+            $brandList    = [];
+            $categoryList = [];
+            $productList  = [];
+            $colorList    = [];
+            $qtyList      = [];
+            $hargaList    = [];
+            $barcodeList  = [];
+
+            $subTotal           = 0;
+            $totalAfterDiscount = 0;
+
+            foreach ($groupedItems as $item) {
+                $brand    = $item['brand_name']    ?? '-';
+                $category = $item['category_name'] ?? '-';
+                $product  = $item['product_name']  ?? '-';
+                $color    = $item['color']         ?? '-';
+                $barcode  = $item['barcode']       ?? '-';
+
+                $qty   = (int) ($item['quantity'] ?? 0);
+                $harga = (int) ($item['price'] ?? 0);
+
+                $brandList[]    = $brand;
+                $categoryList[] = $category;
+                $productList[]  = $product;
+                $colorList[]    = $color;
+                $barcodeList[]  = $barcode;
+                $qtyList[]      = (string) $qty;
+                $hargaList[]    = 'Rp ' . number_format($harga, 0, ',', '.');
+
+                $totalAwal = (int) ($item['raw_total'] ?? ($qty * $harga));
+                $subTotal += $totalAwal;
+
+                $after = (float) $totalAwal;
+                foreach ($discounts as $d) {
+                    $d = max(0, min(100, (float) $d));
+                    if ($d > 0) {
+                        $after -= $after * ($d / 100);
+                    }
+                }
+                $totalAfterDiscount += (int) round($after);
             }
+
+            // total diskon per order
+            $discountAmount = $subTotal - $totalAfterDiscount;
 
             // simpan image paths untuk baris ini
             $this->imageMap[$currentRow] = $this->parseImagePaths($order->delivery_images);
@@ -278,29 +359,31 @@ class FilteredOrdersExport implements FromArray, WithStyles, WithEvents
                 $this->dashIfEmpty($order->no_order),
                 $this->dashIfEmpty(optional($order->created_at)->format('Y-m-d H:i')),
                 $this->dashIfEmpty(optional($order->updated_at)->format('Y-m-d H:i')),
-                $this->dashIfEmpty($order->department->name ?? '-'),
-                $this->dashIfEmpty($order->employee->name ?? '-'),
                 $this->dashIfEmpty($order->customer->name ?? '-'),
-                $this->dashIfEmpty($order->customer->customerCategory->name ?? '-'),
-                $this->dashIfEmpty($order->customerProgram->name ?? 'Tidak Ikut Program'),
-                $this->dashIfEmpty($order->phone ?? '-'),
-                $this->dashIfEmpty($order->address ?? '-'),
-                implode("\n", $deskripsiProduk),
-                $totalPcs,
-                implode("\n", $hargaProduk),
-                'Rp ' . number_format($totalAwalSemuaProduk, 0, ',', '.'),
-                $this->dashIfEmpty($order->jumlah_program ?? '-'),
-                $this->dashIfEmpty($order->reward_point ?? '-'),
-                $diskonGabungan,
-                $penjelasanDiskon,
-                'Rp ' . number_format($order->totalAfterDiscount, 0, ',', '.'),
+
+                implode("\n", array_map(fn ($b) => $this->dashIfEmpty($b), $barcodeList)),
+                implode("\n", $brandList),
+                implode("\n", $categoryList),
+                implode("\n", $productList),
+                implode("\n", $colorList),
+
+                implode("\n", $qtyList),
+                implode("\n", $hargaList),
+
+                $this->dashIfEmpty($diskonGabungan),                               // Disc%
+                'Rp ' . number_format($discountAmount, 0, ',', '.'),               // Total Discount
+                'Rp ' . number_format($totalAfterDiscount, 0, ',', '.'),           // Total Akhir
+
                 $this->dashIfEmpty($order->payment_method ?? '-'),
+                $this->dashIfEmpty(optional($order->payment_due_until)?->format('Y-m-d') ?? '-'),
+                $this->dashIfEmpty($order->employee->name ?? '-'),
+                $this->dashIfEmpty($order->department->name ?? '-'),
+                $this->dashIfEmpty($order->customerProgram->name ?? 'Tidak Ikut Program'),
+                $this->dashIfEmpty($order->customer->customerCategory->name ?? '-'),
                 $this->mapStatusPembayaran($order->status_pembayaran ?? null),
                 $this->mapStatusPengajuan($order->status_pengajuan ?? null),
                 $this->mapStatusProduct($order->status_product ?? null),
                 $this->mapStatusOrder($order->status_order ?? null),
-                $this->dashIfEmpty($order->rejection_comment ?? '-'),
-                $this->dashIfEmpty($order->cancelled_comment ?? '-'),
                 $this->dashIfEmpty(optional($order->on_hold_until)?->format('Y-m-d') ?? '-'),
                 $this->dashIfEmpty($order->on_hold_comment ?? '-'),
                 empty($this->imageMap[$currentRow]) ? '-' : '',

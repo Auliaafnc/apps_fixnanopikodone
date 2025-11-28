@@ -360,6 +360,8 @@ class Garansi extends Model
                 'product_name'  => $product?->name ?? '(Produk hilang)',
                 'color'         => $warna,
                 'quantity'      => (int) ($item['quantity'] ?? 0),
+
+                'barcode'       => $product?->description,
             ];
         }, $raw);
     }

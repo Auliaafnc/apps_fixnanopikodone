@@ -519,7 +519,7 @@ class OrderResource extends Resource
             ->numeric()
             ->live(),
     ])
-    ->columns(4)
+    ->columns(3)
     ->minItems(1)
     ->defaultItems(1)
     ->createItemButtonLabel('Tambah Kebutuhan')
@@ -907,27 +907,87 @@ class OrderResource extends Resource
                         Grid::make(4)->schema([
                             Select::make('department_id')->label('Department')
                                 ->options(Department::pluck('name', 'id'))->searchable()->preload(),
+
                             Select::make('employee_id')->label('Karyawan')
                                 ->options(Employee::pluck('name', 'id'))->searchable()->preload(),
+
                             Select::make('customer_id')->label('Customer')
                                 ->options(Customer::pluck('name', 'id'))->searchable()->preload(),
+
                             Select::make('customer_categories_id')->label('Kategori Customer')
                                 ->options(CustomerCategories::pluck('name', 'id'))->searchable()->preload(),
+
                             Select::make('payment_method')->label('Metode Pembayaran')
                                 ->options(['cash' => 'Cash','tempo' => 'Tempo'])->searchable(),
+
                             Select::make('status_pembayaran')->label('Status Pembayaran')
-                                ->options(['belum bayar' => 'Belum Bayar','sudah bayar' => 'Sudah Bayar'])->searchable(),
+                                ->options([
+                                    'belum bayar' => 'Belum Bayar',
+                                    'sudah bayar' => 'Sudah Bayar',
+                                ])->searchable(),
+
+                            Select::make('status_pengajuan')->label('Status Pengajuan')
+                                ->options([
+                                    'pending'  => 'Pending',
+                                    'approved' => 'Disetujui',
+                                    'rejected' => 'Ditolak',
+                                ])->searchable(),
+
+                            Select::make('status_order')->label('Status Order')
+                                ->options([
+                                    'pending'    => 'Pending',
+                                    'confirmed'  => 'Confirmed',
+                                    'processing' => 'Processing',
+                                    'on_hold'    => 'On Hold',
+                                    'delivered'  => 'Delivered',
+                                    'completed'  => 'Completed',
+                                    'cancelled'  => 'Cancelled',
+                                    'rejected'   => 'Ditolak',
+                                ])->searchable(),
+
+                            Select::make('status_product')->label('Status Produk')
+                                ->options([
+                                    'pending'     => 'Pending',
+                                    'ready_stock' => 'Ready Stock',
+                                    'sold_out'    => 'Sold Out',
+                                    'rejected'    => 'Ditolak',
+                                ])->searchable(),
+
                             Select::make('customer_program_id')->label('Program Pelanggan')
                                 ->options(CustomerProgram::pluck('name', 'id'))->searchable()->preload(),
-                            Select::make('brand_id')->label('Brand')->searchable()->options(Brand::pluck('name', 'id')),
-                            Select::make('product_id')->label('Produk')->searchable()->options(Product::pluck('name', 'id')),
-                            Select::make('category_id')->label('Kategori Produk')->searchable()->options(Category::pluck('name', 'id')),
-                            Select::make('has_diskon')->label('Ada Diskon?')->options(['ya' => 'Ya','tidak' => 'Tidak'])->searchable(),
-                            Select::make('has_reward_point')->label('Ada Reward Point?')->options(['ya' => 'Ya','tidak' => 'Tidak'])->searchable(),
-                            Select::make('has_program_point')->label('Ada Program Point?')->options(['ya' => 'Ya','tidak' => 'Tidak'])->searchable(),
+
+                            Select::make('brand_id')->label('Brand')
+                                ->options(Brand::pluck('name', 'id'))->searchable(),
+
+                            Select::make('product_id')->label('Produk')
+                                ->options(Product::pluck('name', 'id'))->searchable(),
+
+                            Select::make('category_id')->label('Kategori Produk')
+                                ->options(Category::pluck('name', 'id'))->searchable(),
+
+                            Select::make('has_diskon')->label('Ada Diskon?')->options([
+                                'ya' => 'Ya', 'tidak' => 'Tidak',
+                            ])->searchable(),
+
+                            Select::make('has_reward_point')->label('Ada Reward Point?')->options([
+                                'ya' => 'Ya', 'tidak' => 'Tidak',
+                            ])->searchable(),
+
+                            Select::make('has_program_point')->label('Ada Program Point?')->options([
+                                'ya' => 'Ya', 'tidak' => 'Tidak',
+                            ])->searchable(),
+
+                            // 🔹 FILTER TANGGAL DIBUAT
+                            DatePicker::make('created_from')
+                                ->label('Dibuat dari tanggal'),
+
+                            DatePicker::make('created_until')
+                                ->label('Sampai tanggal'),
+
                             Checkbox::make('export_all')->label('Print Semua Data')->reactive(),
-                        ])
+                        ]),
                     ])
+
                     ->action(function (array $data) {
                         $export = new FilteredOrdersExport($data);
                         $rows = $export->array();
@@ -941,7 +1001,7 @@ class OrderResource extends Resource
                         }
 
                         return Excel::download($export, 'export_orders.xlsx');
-                    })
+                    }),
             ])
             ->actions([
                 ViewAction::make(),

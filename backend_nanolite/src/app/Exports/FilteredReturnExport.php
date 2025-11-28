@@ -10,6 +10,7 @@ use Maatwebsite\Excel\Events\AfterSheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
@@ -17,9 +18,9 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
 {
     protected array $filters;
 
-    /** @var array<int, array<int, string>> row => [imgPath,...] */
-    protected array $productImageMap = [];
-    /** @var array<int, array<int, string>> row => [imgPath,...] */
+    /** @var array<int, array<int,string>> rowIndex => [paths...] */
+    protected array $productImageMap  = [];
+    /** @var array<int, array<int,string>> rowIndex => [paths...] */
     protected array $deliveryImageMap = [];
 
     public function __construct(array $filters = [])
@@ -27,15 +28,30 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
         $this->filters = $filters;
     }
 
+    protected function dashIfEmpty($value): string
+    {
+        return (is_null($value) || trim((string) $value) === '') ? '-' : (string) $value;
+    }
+
+    /**
+     * Ambil max 3 path gambar dari field images
+     */
     protected function parseImagePaths($images): array
     {
         if (is_string($images) && str_starts_with($images, '[')) {
             $images = json_decode($images, true);
         }
-        $arr = is_array($images) ? $images : ((is_string($images) && $images !== '') ? [$images] : []);
+
+        $arr = [];
+        if (is_array($images)) {
+            $arr = $images;
+        } elseif (is_string($images) && $images !== '') {
+            $arr = [$images];
+        }
+
         $paths = [];
         foreach ($arr as $p) {
-            $p = preg_replace('#^/?storage/#', '', $p);
+            $p   = preg_replace('#^/?storage/#', '', $p);
             $abs = storage_path('app/public/' . ltrim($p, '/'));
             if (is_file($abs)) {
                 $paths[] = $abs;
@@ -44,9 +60,13 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
                 break;
             }
         }
+
         return $paths;
     }
 
+    /**
+     * Filter manual by brand/category/product dari productsWithDetails()
+     */
     protected function applyManualFilters($returns)
     {
         if (!empty($this->filters['brand_id'])) {
@@ -59,6 +79,7 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
                 return false;
             });
         }
+
         if (!empty($this->filters['category_id'])) {
             $returns = $returns->filter(function ($r) {
                 foreach ($r->productsWithDetails() as $i) {
@@ -69,6 +90,7 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
                 return false;
             });
         }
+
         if (!empty($this->filters['product_id'])) {
             $returns = $returns->filter(function ($r) {
                 foreach ($r->productsWithDetails() as $i) {
@@ -79,67 +101,80 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
                 return false;
             });
         }
-        return $returns;
-    }
 
-    protected function formatAddress($address): string
-    {
-        if (is_array($address)) {
-            $parts = [
-                $address['detail_alamat'] ?? null,
-                $address['kelurahan'] ?? null,
-                $address['kecamatan'] ?? null,
-                $address['kota_kab'] ?? null,
-                $address['provinsi'] ?? null,
-                $address['kode_pos'] ?? null,
-            ];
-            $txt = implode(', ', array_filter($parts, fn ($x) => $x && $x !== '-'));
-            return $txt !== '' ? $txt : '-';
-        }
-        return $address ?: '-';
+        return $returns;
     }
 
     public function array(): array
     {
-        $q = ProductReturn::with(['customer.customerCategory','employee','department','category'])
-            ->orderBy('created_at','asc');
+        $q = ProductReturn::with([
+            'customer.customerCategory',
+            'employee',
+            'department',
+            'category',
+        ])->orderBy('created_at', 'asc');
 
-        if (!empty($this->filters['department_id']))          $q->where('department_id', $this->filters['department_id']);
-        if (!empty($this->filters['employee_id']))            $q->where('employee_id', $this->filters['employee_id']);
-        if (!empty($this->filters['customer_id']))            $q->where('customer_id', $this->filters['customer_id']);
-        if (!empty($this->filters['customer_categories_id'])) $q->where('customer_categories_id', $this->filters['customer_categories_id']);
-        if (!empty($this->filters['status']))                 $q->where('status', $this->filters['status']);
+        // ===== FILTER DARI FORM EXPORT (disamain dengan FilteredGaransiExport) =====
+        if (!empty($this->filters['department_id'])) {
+            $q->where('department_id', $this->filters['department_id']);
+        }
+        if (!empty($this->filters['customer_id'])) {
+            $q->where('customer_id', $this->filters['customer_id']);
+        }
+        if (!empty($this->filters['employee_id'])) {
+            $q->where('employee_id', $this->filters['employee_id']);
+        }
+        if (!empty($this->filters['customer_categories_id'])) {
+            $q->where('customer_categories_id', $this->filters['customer_categories_id']);
+        }
+
+        // filter status (menyesuaikan field di ProductReturn)
+        if (!empty($this->filters['status_pengajuan'])) {
+            $q->where('status_pengajuan', $this->filters['status_pengajuan']);
+        }
+        if (!empty($this->filters['status_product'])) {
+            $q->where('status_product', $this->filters['status_product']);
+        }
+        if (!empty($this->filters['status_return'])) {
+            $q->where('status_return', $this->filters['status_return']);
+        }
+
+        // filter tanggal dibuat (created_at)
+        if (!empty($this->filters['created_from'])) {
+            $q->whereDate('created_at', '>=', $this->filters['created_from']);
+        }
+        if (!empty($this->filters['created_until'])) {
+            $q->whereDate('created_at', '<=', $this->filters['created_until']);
+        }
 
         $returns = $this->applyManualFilters($q->get());
 
+        // ===== HEADER (gaya mirip FilteredGaransiExport, tapi menyesuaikan return) =====
         $headers = [
             'No.',
             'No Return',
-            'Department',
-            'Karyawan',
+            'Tanggal Dibuat',
             'Customer',
-            'Kategori Customer',
-            'Phone',
-            'Alamat',
-            'Item Description',
-            'Pcs',
+            'Barcode',
+            'Brand',
+            'Category',
+            'Product',
+            'Warna',
+            'Pcs/item',
             'Alasan Return',
-            'Catatan',
             'Nominal',
+            'Karyawan',
+            'Department',
+            'Kategori Customer',
             'Status Pengajuan',
             'Status Produk',
             'Status Return',
-            'Alasan Ditolak',      // ⬅ baru
-            'Alasan Cancelled',    // ⬅ baru
             'Batas Hold',
             'Alasan Hold',
             'Foto Barang',
             'Bukti Pengiriman',
-            'Tanggal Dibuat',
-            'Tanggal Diupdate',
         ];
 
-        // baris judul
         $rows = [
             array_fill(0, count($headers), ''),
             $headers,
@@ -147,68 +182,107 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
         $rows[0][(int) floor(count($headers) / 2)] = 'PRODUCT RETURN';
 
         $no         = 1;
-        $currentRow = 3;
+        $startRow   = 3;
+        $currentRow = $startRow;
 
         foreach ($returns as $r) {
-            $items = $r->productsWithDetails();
-            $desc = collect($items)->map(function ($i) {
-                $name  = "{$i['brand_name']} – {$i['category_name']} – {$i['product_name']}";
-                $color = $i['color'] ?? '';
-                $qty   = (int)($i['quantity'] ?? 0);
-                return trim("$name $color ({$qty} pcs)");
-            })->implode("\n");
-            $totalPcs = collect($items)->sum(fn ($i) => (int)($i['quantity'] ?? 0));
+            $items = $r->productsWithDetails() ?? [];
 
-            // simpan path gambar per baris
+            // group per kombinasi Brand+Category+Product+Warna+Barcode
+            $groupedItems = collect($items)
+                ->groupBy(function ($item) {
+                    return implode('|', [
+                        $item['brand_name']    ?? '',
+                        $item['category_name'] ?? '',
+                        $item['product_name']  ?? '',
+                        $item['color']         ?? '',
+                        $item['barcode']       ?? '',
+                    ]);
+                })
+                ->map(function ($group) {
+                    $first = $group->first();
+
+                    $qtyTotal = collect($group)->sum(function ($i) {
+                        return (int) ($i['quantity'] ?? 0);
+                    });
+
+                    $first['quantity'] = $qtyTotal;
+
+                    return $first;
+                })
+                ->values();
+
+            $brandList    = [];
+            $categoryList = [];
+            $productList  = [];
+            $colorList    = [];
+            $barcodeList  = [];
+            $qtyList      = [];
+
+            foreach ($groupedItems as $item) {
+                $brand    = $item['brand_name']    ?? '-';
+                $category = $item['category_name'] ?? '-';
+                $product  = $item['product_name']  ?? '-';
+                $color    = $item['color']         ?? '-';
+                $barcode  = $item['barcode']       ?? '-';
+                $qty      = (int) ($item['quantity'] ?? 0);
+
+                $brandList[]    = $brand;
+                $categoryList[] = $category;
+                $productList[]  = $product;
+                $colorList[]    = $color;
+                $barcodeList[]  = $barcode;
+                $qtyList[]      = (string) $qty;
+            }
+
+            // simpan image paths untuk baris ini
             $this->productImageMap[$currentRow]  = $this->parseImagePaths($r->image);
             $this->deliveryImageMap[$currentRow] = $this->parseImagePaths($r->delivery_images);
 
             $rows[] = [
                 $no++,
-                $r->no_return ?? '-',
-                $r->department->name ?? '-',
-                $r->employee->name ?? '-',
-                $r->customer->name ?? '-',
-                $r->category->name ?? '-',
-                $r->phone ?? '-',
-                $this->formatAddress($r->address),
-                $desc ?: '-',
-                $totalPcs ?: 0,
-                $r->reason ?? '-',
-                $r->note ?? '-',
+                $this->dashIfEmpty($r->no_return),
+                $this->dashIfEmpty(optional($r->created_at)->format('Y-m-d H:i')),
+                $this->dashIfEmpty($r->customer->name ?? '-'),
+
+                // multiline item detail (mirip FilteredGaransiExport)
+                empty($barcodeList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $barcodeList)),
+                empty($brandList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $brandList)),
+                empty($categoryList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $categoryList)),
+                empty($productList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $productList)),
+                empty($colorList)
+                    ? '-'
+                    : implode("\n", array_map(fn ($v) => $this->dashIfEmpty($v), $colorList)),
+
+                empty($qtyList)
+                    ? '-'
+                    : implode("\n", $qtyList),
+
+                $this->dashIfEmpty($r->reason ?? '-'),
+
                 'Rp ' . number_format((int) $r->amount, 0, ',', '.'),
-                match ($r->status_pengajuan) {
-                    'pending'  => 'Pending',
-                    'approved' => 'Disetujui',
-                    'rejected' => 'Ditolak',
-                    default    => ucfirst((string) $r->status_pengajuan),
-                },
-                match ($r->status_product) {
-                    'pending'     => 'Pending',
-                    'ready_stock' => 'Ready Stock',
-                    'sold_out'    => 'Sold Out',
-                    'rejected'    => 'Ditolak',
-                    default       => ucfirst((string) $r->status_product),
-                },
-                match ($r->status_return) {
-                    'pending'    => 'Pending',
-                    'confirmed'  => 'Confirmed',
-                    'processing' => 'Processing',
-                    'on_hold'    => 'On Hold',
-                    'delivered'  => 'Delivered',
-                    'completed'  => 'Completed',
-                    'cancelled'  => 'Cancelled',
-                    'rejected'   => 'Ditolak',
-                    default      => ucfirst((string) $r->status_return),
-                },
-                $r->rejection_comment ?: '-',   // ⬅ alasan ditolak
-                $r->cancelled_comment ?: '-',   // ⬅ alasan cancel
-                optional($r->on_hold_until)->format('Y-m-d') ?? '-',
-                $r->on_hold_comment ?: '-',
+
+                $this->dashIfEmpty($r->employee->name ?? '-'),
+                $this->dashIfEmpty($r->department->name ?? '-'),
+                $this->dashIfEmpty($r->customer?->customerCategory->name ?? '-'),
+
+                $this->dashIfEmpty($r->status_pengajuan ?? $r->status ?? '-'),
+                $this->dashIfEmpty($r->status_product ?? '-'),
+                $this->dashIfEmpty($r->status_return ?? '-'),
+
+                $this->dashIfEmpty(optional($r->on_hold_until)?->format('Y-m-d') ?? '-'),
+                $this->dashIfEmpty($r->on_hold_comment ?? '-'),
+
                 empty($this->productImageMap[$currentRow])  ? '-' : '',
                 empty($this->deliveryImageMap[$currentRow]) ? '-' : '',
-                optional($r->created_at)->format('Y-m-d H:i'),
-                optional($r->updated_at)->format('Y-m-d H:i'),
             ];
 
             $currentRow++;
@@ -221,58 +295,62 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
     {
         return [
             AfterSheet::class => function (AfterSheet $event) {
-                $sheet   = $event->sheet->getDelegate();
-                $lastCol = $sheet->getHighestColumn();
-                $lastColIndex = Coordinate::columnIndexFromString($lastCol);
+                $sheet       = $event->sheet->getDelegate();
+                $lastCol     = $sheet->getHighestColumn();
+                $lastColIdx  = Coordinate::columnIndexFromString($lastCol);
 
-                // POSISI: ... Foto Barang, Bukti Pengiriman, Tgl Dibuat, Tgl Diupdate
-                $fotoColIndex     = $lastColIndex - 3;
-                $deliveryColIndex = $lastColIndex - 2;
+                // Kolom gambar: Foto Barang = kolom ke-2 dari belakang, Bukti Pengiriman = kolom terakhir
+                $fotoColIdx     = $lastColIdx - 1;
+                $deliveryColIdx = $lastColIdx;
 
-                $fotoCol     = Coordinate::stringFromColumnIndex($fotoColIndex);
-                $deliveryCol = Coordinate::stringFromColumnIndex($deliveryColIndex);
+                $fotoCol     = Coordinate::stringFromColumnIndex($fotoColIdx);
+                $deliveryCol = Coordinate::stringFromColumnIndex($deliveryColIdx);
 
-                // lebar kolom gambar
+                // set lebar kolom gambar
                 $sheet->getColumnDimension($fotoCol)->setWidth(40);
                 $sheet->getColumnDimension($deliveryCol)->setWidth(40);
 
                 // tanam foto barang
                 foreach ($this->productImageMap as $row => $paths) {
                     $sheet->getRowDimension($row)->setRowHeight(65);
+
                     if (empty($paths)) {
                         $sheet->setCellValue($fotoCol . $row, '-');
                         continue;
                     }
-                    $ox = 5;
+
+                    $offsetX = 5;
                     foreach (array_slice($paths, 0, 3) as $path) {
-                        $d = new Drawing();
-                        $d->setPath($path);
-                        $d->setWorksheet($sheet);
-                        $d->setCoordinates($fotoCol . $row);
-                        $d->setOffsetX($ox);
-                        $d->setOffsetY(3);
-                        $d->setHeight(55);
-                        $ox += 60;
+                        $drawing = new Drawing();
+                        $drawing->setPath($path);
+                        $drawing->setWorksheet($sheet);
+                        $drawing->setCoordinates($fotoCol . $row);
+                        $drawing->setOffsetX($offsetX);
+                        $drawing->setOffsetY(3);
+                        $drawing->setHeight(55);
+                        $offsetX += 60;
                     }
                 }
 
                 // tanam bukti pengiriman
                 foreach ($this->deliveryImageMap as $row => $paths) {
                     $sheet->getRowDimension($row)->setRowHeight(65);
+
                     if (empty($paths)) {
                         $sheet->setCellValue($deliveryCol . $row, '-');
                         continue;
                     }
-                    $ox = 5;
+
+                    $offsetX = 5;
                     foreach (array_slice($paths, 0, 3) as $path) {
-                        $d = new Drawing();
-                        $d->setPath($path);
-                        $d->setWorksheet($sheet);
-                        $d->setCoordinates($deliveryCol . $row);
-                        $d->setOffsetX($ox);
-                        $d->setOffsetY(3);
-                        $d->setHeight(55);
-                        $ox += 60;
+                        $drawing = new Drawing();
+                        $drawing->setPath($path);
+                        $drawing->setWorksheet($sheet);
+                        $drawing->setCoordinates($deliveryCol . $row);
+                        $drawing->setOffsetX($offsetX);
+                        $drawing->setOffsetY(3);
+                        $drawing->setHeight(55);
+                        $offsetX += 60;
                     }
                 }
             },
@@ -281,20 +359,22 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
 
     public function styles(Worksheet $sheet)
     {
-        $lastCol = $sheet->getHighestColumn();
+        $lastCol     = $sheet->getHighestColumn();
+        $lastColIdx  = Coordinate::columnIndexFromString($lastCol);
+        $highestRow  = $sheet->getHighestRow();
 
-        // Title
+        // judul
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'PRODUCT RETURN');
         $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
-            'font' => ['bold' => true, 'size' => 14],
+            'font'      => ['bold' => true, 'size' => 14],
             'alignment' => [
                 'horizontal' => Alignment::HORIZONTAL_CENTER,
                 'vertical'   => Alignment::VERTICAL_CENTER,
             ],
         ]);
 
-        // Header
+        // header
         $sheet->getStyle("A2:{$lastCol}2")->applyFromArray([
             'font'      => ['bold' => true],
             'alignment' => [
@@ -306,18 +386,15 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
                 'fillType'   => Fill::FILL_SOLID,
                 'startColor' => ['rgb' => 'F0F0F0'],
             ],
-            'borders'   => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN]],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
         ]);
 
-        // Data + autosize (skip 2 kolom gambar)
-        $highestRow   = $sheet->getHighestRow();
-        $lastColIndex = Coordinate::columnIndexFromString($lastCol);
-
+        // data
         for ($row = 3; $row <= $highestRow; $row++) {
-            for ($i = 1; $i <= $lastColIndex; $i++) {
+            for ($i = 1; $i <= $lastColIdx; $i++) {
                 $col = Coordinate::stringFromColumnIndex($i);
                 $sheet->getStyle("{$col}{$row}")->applyFromArray([
-                    'borders'   => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN]],
+                    'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
                     'alignment' => [
                         'horizontal' => Alignment::HORIZONTAL_CENTER,
                         'vertical'   => Alignment::VERTICAL_TOP,
@@ -327,13 +404,16 @@ class FilteredReturnExport implements FromArray, WithStyles, WithEvents
             }
         }
 
-        $img1 = $lastColIndex - 3; // Foto Barang
-        $img2 = $lastColIndex - 2; // Bukti Pengiriman
-        for ($i = 1; $i <= $lastColIndex; $i++) {
-            if ($i === $img1 || $i === $img2) {
+        // autosize kecuali 2 kolom gambar (biar width 40 tetap)
+        $fotoColIdx     = $lastColIdx - 1;
+        $deliveryColIdx = $lastColIdx;
+
+        for ($i = 1; $i <= $lastColIdx; $i++) {
+            if ($i === $fotoColIdx || $i === $deliveryColIdx) {
                 continue;
             }
-            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($i))->setAutoSize(true);
+            $col = Coordinate::stringFromColumnIndex($i);
+            $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 
         return [];

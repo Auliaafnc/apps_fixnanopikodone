@@ -17,6 +17,7 @@ use App\Models\Concerns\OwnedByEmployee;
 use App\Models\CustomerProgram;
 use App\Models\Concerns\LatestFirst; 
 
+
 class Order extends Model
 {
     use HasFactory, OwnedByEmployee, LatestFirst; 
@@ -268,7 +269,10 @@ class Order extends Model
                 'price'         => $item['price'] ?? 0,
                 'quantity'      => $item['quantity'] ?? 0,
                 'subtotal'      => $item['subtotal'] ?? (($item['price'] ?? 0) * ($item['quantity'] ?? 0)),
+
+                'barcode'       => $product?->description,
             ];
+
         }, $raw);
     }
 

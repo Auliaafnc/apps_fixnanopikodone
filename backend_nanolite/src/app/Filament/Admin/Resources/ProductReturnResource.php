@@ -544,12 +544,16 @@ class ProductReturnResource extends Resource
                                 ->options(Customer::pluck('name', 'id'))->searchable()->preload(),
                             Select::make('customer_categories_id')->label('Kategori Customer')
                                 ->options(CustomerCategories::pluck('name', 'id'))->searchable()->preload(),
-                            Select::make('status')->label('Status')
-                                ->options(['pending' => 'Pending','approved' => 'Disetujui','rejected' => 'Ditolak'])
-                                ->searchable(),
                             Select::make('brand_id')->label('Brand')->searchable()->options(Brand::pluck('name', 'id')),
                             Select::make('category_id')->label('Kategori Produk')->searchable()->options(Category::pluck('name', 'id')),
                             Select::make('product_id')->label('Produk')->searchable()->options(Product::pluck('name', 'id')),
+                            Select::make('status_pengajuan')->label('Status Pengajuan')->options(['pending'=>'Pending','approved'=>'Disetujui','rejected'=>'Ditolak']),
+                            Select::make('status_product')->label('Status Produk')->options(['pending'=>'Pending','ready_stock'=>'Ready Stock','sold_out'=>'Sold Out','rejected'=>'Ditolak']),
+                            Select::make('status_return')->label('Status Return')->options(['pending'=>'Pending','confirmed'=>'Confirmed','processing'=>'Processing','on_hold'=>'On Hold','delivered'=>'Delivered','completed'=>'Completed','cancelled'=>'Cancelled','rejected'=>'Ditolak']),
+                            DatePicker::make('created_from')
+                                ->label('Dibuat dari tanggal'),
+                            DatePicker::make('created_until')
+                                ->label('Sampai tanggal'),
                             Checkbox::make('export_all')->label('Print Semua Data')->reactive(),
                         ])
                     ])

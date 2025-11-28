@@ -90,8 +90,8 @@ class ProductResource extends Resource
                     ->prefix('Rp')
                     ->required(),
                     
-                Textarea::make('description')
-                    ->label('Description')
+                TextInput::make('description')
+                    ->label('Barcode')
                     ->nullable(),
                 
 
@@ -164,8 +164,7 @@ class ProductResource extends Resource
  
 
                 TextColumn::make('description')
-                    ->label('Deskripsi')
-                    ->limit(50)
+                    ->label('Barcode')
                     ->getStateUsing(fn ($record) => $record->description ?: '-')
                     ->toggleable(),
 
